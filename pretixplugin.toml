@@ -1,0 +1,5 @@
+[plugin]
+package = "pretix-ogone"
+modules = [ "pretix_ogone" ]
+marketplace_name = "ogone"
+
