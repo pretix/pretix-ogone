@@ -39,6 +39,12 @@ You can auto-fix some of these issues by running::
 To automatically check for these issues before you commit, you can run ``.install-hooks``.
 
 
+Upstream documentation
+----------------------
+
+- https://support-payengine.ecom-psp.com/de/integration-solutions/integrations/hosted-payment-page
+- https://support.legacy.worldline-solutions.com/en/
+
 License
 -------
 
