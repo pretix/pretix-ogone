@@ -15,7 +15,13 @@ from pretix.base.payment import BasePaymentProvider, PaymentException
 from pretix.base.settings import SettingsSandbox
 from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
 
-from pretix_ogone.constants import PENDING_STATES, SHA_IN_PARAMETERS
+from pretix_ogone.constants import (
+    PENDING_STATES,
+    REFUND_OK_STATES,
+    REFUNDABLE_STATES,
+    SHA_IN_PARAMETERS,
+    SUCCESS_STATES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +342,7 @@ class OgoneMethod(BasePaymentProvider):
                 "USERID": self.settings.api_user_userid,
             },
         )
-        if current_status["STATUS"] not in ("9", "91", "8", "81"):
+        if current_status["STATUS"] not in REFUNDABLE_STATES:
             raise PaymentException(
                 _("Payment is not in correct status to be refunded.")
             )
@@ -356,7 +362,7 @@ class OgoneMethod(BasePaymentProvider):
         )
         refund.info_data = response
         refund.save()
-        if response["STATUS"] in ("8", "81"):
+        if response["STATUS"] in REFUND_OK_STATES:
             refund.done()
         else:
             raise PaymentException(
@@ -507,7 +513,7 @@ class OgoneMethod(BasePaymentProvider):
             **response,
         }
         payment.save(update_fields=["info"])
-        if response["STATUS"] == "9":
+        if response["STATUS"] in SUCCESS_STATES:
             payment.confirm()
         elif response["STATUS"] in PENDING_STATES:
             payment.state = OrderPayment.PAYMENT_STATE_PENDING

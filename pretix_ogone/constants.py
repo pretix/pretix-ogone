@@ -493,3 +493,10 @@ STATUSES = {
     99: "Being processed",
 }
 PENDING_STATES = ("91", "92", "99")
+SUCCESS_STATES = ("9",)
+CANCELED_STATES = (
+    "1",
+    "6",
+)  # all others than pending, success and canceled will be treated as failure on payment
+REFUNDABLE_STATES = ("9", "91", "8", "81")  # guesswork
+REFUND_OK_STATES = ("8", "81")

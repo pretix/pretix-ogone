@@ -16,7 +16,12 @@ from pretix.base.models import Event, Order, OrderPayment, Quota
 from pretix.base.payment import PaymentException
 from pretix.multidomain.urlreverse import eventreverse
 
-from pretix_ogone.constants import PENDING_STATES, SHA_OUT_PARAMETERS
+from pretix_ogone.constants import (
+    CANCELED_STATES,
+    PENDING_STATES,
+    SHA_OUT_PARAMETERS,
+    SUCCESS_STATES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +97,13 @@ class OgoneOrderView:
         ):
             self.payment.state = OrderPayment.PAYMENT_STATE_PENDING
             self.payment.save()
-        elif data["STATUS"] in ("1", "6") and payment.state in (
+        elif data["STATUS"] in CANCELED_STATES and payment.state in (
             OrderPayment.PAYMENT_STATE_PENDING,
             OrderPayment.PAYMENT_STATE_CREATED,
         ):
             self.payment.state = OrderPayment.PAYMENT_STATE_CANCELED
             self.payment.save()
-        elif data["STATUS"] == "9" and payment.state in (
+        elif data["STATUS"] in SUCCESS_STATES and payment.state in (
             OrderPayment.PAYMENT_STATE_PENDING,
             OrderPayment.PAYMENT_STATE_CREATED,
         ):
