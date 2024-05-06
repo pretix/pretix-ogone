@@ -1,6 +1,6 @@
 from django.urls import include, path, re_path
 
-from .views import RedirectView, ReturnView
+from .views import HookView, RedirectView, ReturnView
 
 event_patterns = [
     re_path(
@@ -19,5 +19,14 @@ event_patterns = [
                 ),
             ]
         ),
+    ),
+]
+
+
+urlpatterns = [
+    path(
+        "_ogone/hook/<str:organizer>-<str:event>-<str:order>-<str:payment>/",
+        HookView.as_view(),
+        name="webhook",
     ),
 ]

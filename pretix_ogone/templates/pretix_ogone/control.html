@@ -2,29 +2,25 @@
 
 {% if payment_info %}
     <dl class="dl-horizontal">
-        {% if "oid" in payment_info %}
-            <dt>{% trans "oID" %}</dt>
-            <dd>{{ payment_info.oid }}</dd>
+        {% if "PAYID" in payment_info %}
+            <dt>{% trans "Payment ID" %}</dt>
+            <dd>{{ payment_info.PAYID }}</dd>
         {% endif %}
-        {% if "orderId" in payment_info %}
-            <dt>{% trans "Order Id" %}</dt>
-            <dd>{{ payment_info.orderId }}</dd>
+        {% if "PM" in payment_info %}
+            <dt>{% trans "Payment method" %}</dt>
+            <dd>{{ payment_info.PM }}</dd>
         {% endif %}
-        {% if "ipgTransactionId" in payment_info %}
-            <dt>{% trans "IPG Transaction Id" %}</dt>
-            <dd>{{ payment_info.ipgTransactionId }}</dd>
+        {% if "BRAND" in payment_info %}
+            <dt>{% trans "Payment brand" %}</dt>
+            <dd>{{ payment_info.BRAND }}</dd>
         {% endif %}
-        {% if "status" in payment_info %}
-            <dt>{% trans "Payment state" %}</dt>
-            <dd>{{ payment_info.status }}</dd>
+        {% if "CARDNO" in payment_info %}
+            <dt>{% trans "Card number" %}</dt>
+            <dd>{{ payment_info.CARDNO }}</dd>
         {% endif %}
-        {% if "transactionStatus" in payment_info %}
-            <dt>{% trans "Transaction state" %}</dt>
-            <dd>{{ payment_info.transactionStatus }}</dd>
-        {% endif %}
-        {% if "approval_code" in payment_info %}
-            <dt>{% trans "Approval Code" %}</dt>
-            <dd>{{ payment_info.approval_code }}</dd>
+        {% if "STATUS" in payment_info %}
+            <dt>{% trans "Status" %}</dt>
+            <dd>{{ payment_info.STATUS }}</dd>
         {% endif %}
     </dl>
 {% endif %}

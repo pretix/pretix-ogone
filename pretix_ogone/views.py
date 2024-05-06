@@ -1,7 +1,8 @@
 import hashlib
-from binascii import hexlify
+import logging
 from django.contrib import messages
-from django.http import Http404
+from django.db import transaction
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.utils.decorators import method_decorator
 from django.utils.functional import cached_property
@@ -10,18 +11,29 @@ from django.views import View
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
-from pretix.base.models import Order, OrderPayment, Quota
+from django_scopes import scopes_disabled
+from pretix.base.models import Event, Order, OrderPayment, Quota
 from pretix.base.payment import PaymentException
 from pretix.multidomain.urlreverse import eventreverse
 
-from pretix_ogone.constants import SHA_OUT_PARAMETERS
+from pretix_ogone.constants import PENDING_STATES, SHA_OUT_PARAMETERS
+
+logger = logging.getLogger(__name__)
 
 
 class OgoneOrderView:
+    @scopes_disabled()
     def dispatch(self, request, *args, **kwargs):
         try:
-            self.order = request.event.orders.get(code=kwargs["order"])
-            if (
+            if hasattr(request, "event"):
+                event = request.event
+            else:
+                event = Event.objects.get(
+                    slug=kwargs.get("event"),
+                    organizer__slug=kwargs.get("organizer"),
+                )
+            self.order = event.orders.get(code=kwargs["order"])
+            if "hash" in kwargs and (
                 hashlib.sha1(self.order.secret.lower().encode()).hexdigest()
                 != kwargs["hash"].lower()
             ):
@@ -41,6 +53,19 @@ class OgoneOrderView:
     def pprov(self):
         return self.payment.payment_provider
 
+    def validate_digest(self, data, prov):
+        if "SHASIGN" in data:
+            data = {k.upper(): v for k, v in data.items()}
+            digest_in = data["SHASIGN"]
+            digest = prov.hashalg()
+            for parname in SHA_OUT_PARAMETERS:
+                if parname in data and data[parname]:
+                    digest.update(
+                        f"{parname}={data[parname]}{prov.settings.sha_out_pass}".encode()
+                    )
+            return digest.hexdigest().upper() == digest_in.upper()
+        return False
+
     @property
     def payment(self):
         return get_object_or_404(
@@ -48,6 +73,39 @@ class OgoneOrderView:
             pk=self.kwargs["payment"],
             provider__istartswith="ogone",
         )
+
+    @transaction.atomic()
+    def process_result(self, data, payment, prov):
+        payment = OrderPayment.objects.select_for_update().get(pk=payment.pk)
+        if payment.state == OrderPayment.PAYMENT_STATE_CONFIRMED:
+            return  # race condition
+        payment.info_data = {**payment.info_data, **data}
+        payment.save(update_fields=["info"])
+        if data["STATUS"] == "5" and payment.state in (
+            OrderPayment.PAYMENT_STATE_PENDING,
+            OrderPayment.PAYMENT_STATE_CREATED,
+        ):
+            prov.capture_payment(payment)
+        elif data["STATUS"] in PENDING_STATES and payment.state in (
+            OrderPayment.PAYMENT_STATE_PENDING,
+            OrderPayment.PAYMENT_STATE_CREATED,
+        ):
+            self.payment.state = OrderPayment.PAYMENT_STATE_PENDING
+            self.payment.save()
+        elif data["STATUS"] in ("1", "6") and payment.state in (
+            OrderPayment.PAYMENT_STATE_PENDING,
+            OrderPayment.PAYMENT_STATE_CREATED,
+        ):
+            self.payment.state = OrderPayment.PAYMENT_STATE_CANCELED
+            self.payment.save()
+        elif data["STATUS"] == "9" and payment.state in (
+            OrderPayment.PAYMENT_STATE_PENDING,
+            OrderPayment.PAYMENT_STATE_CREATED,
+        ):
+            self.payment.confirm()
+            self.order.refresh_from_db()
+        else:
+            raise PaymentException(f"Status {data['STATUS']} not successful")
 
 
 @method_decorator(xframe_options_exempt, "dispatch")
@@ -67,10 +125,10 @@ class RedirectView(OgoneOrderView, TemplateView):
 @method_decorator(xframe_options_exempt, "dispatch")
 class ReturnView(OgoneOrderView, View):
     def get(self, request, *args, **kwargs):
-        return self._handle(request.GET)
+        return self._handle(request.GET.dict())
 
     def post(self, request, *args, **kwargs):
-        return self._handle(request.POST)
+        return self._handle(request.POST.dict())
 
     def _handle(self, data):
         if not self.validate_digest(data, self.pprov):
@@ -85,13 +143,13 @@ class ReturnView(OgoneOrderView, View):
 
         if self.kwargs.get("result") == "cancel":
             self.payment.fail(
-                info_data=dict(data.items()),
+                info=dict(data.items()),
                 log_data={"result": self.kwargs.get("result"), **dict(data.items())},
             )
             return self._redirect_to_order()
         elif self.kwargs.get("result") in ("decline", "exception"):
             self.payment.fail(
-                info_data=dict(data.items()),
+                info=dict(data.items()),
                 log_data={"result": self.kwargs.get("result"), **dict(data.items())},
             )
             messages.error(
@@ -104,11 +162,21 @@ class ReturnView(OgoneOrderView, View):
                 self.process_result(data, self.payment, self.pprov)
             except Quota.QuotaExceededException as e:
                 messages.error(self.request, str(e))
+            except PaymentException as e:
+                messages.error(
+                    self.request,
+                    _("The payment has failed. You can click below to try again."),
+                )
+                if self.payment.state in (
+                    OrderPayment.PAYMENT_STATE_PENDING,
+                    OrderPayment.PAYMENT_STATE_CREATED,
+                ):
+                    self.payment.fail(log_data={"exception": str(e)})
 
             return self._redirect_to_order()
         else:
             self.payment.fail(
-                info_data=dict(data.items()),
+                info=dict(data.items()),
                 log_data={"result": self.kwargs.get("result"), **dict(data.items())},
             )
             messages.error(
@@ -128,39 +196,33 @@ class ReturnView(OgoneOrderView, View):
             + ("?paid=yes" if self.order.status == Order.STATUS_PAID else "")
         )
 
-    def validate_digest(self, data, prov):
-        if "SHASIGN" in data:
-            data = {k.upper(): v for k, v in data.items()}
-            digest_in = data["SHASIGN"]
-            digest = hashlib.sha512()
-            for parname in SHA_OUT_PARAMETERS:
-                if parname in data and data[parname]:
-                    digest.update(
-                        f"{parname}={data[parname]}{prov.settings.sha_out_pass}".encode()
-                    )
-            return digest.hexdigest().upper() == digest_in.upper()
-        return False
 
-    def process_result(self, data, payment, prov):
-        payment.info_data = data
-        payment.save(update_fields=["info"])
-        if data["STATUS"] == "5":
-            try:
-                prov.capture_payment(payment)
-            except PaymentException as e:
-                messages.error(
-                    self.request,
-                    _("The payment has failed. You can click below to try again."),
-                )
+@method_decorator(csrf_exempt, name="dispatch")
+@method_decorator(xframe_options_exempt, "dispatch")
+class HookView(OgoneOrderView, View):
+    def get(self, request, *args, **kwargs):
+        return self._handle(request.GET.dict())
+
+    def post(self, request, *args, **kwargs):
+        return self._handle(request.POST.dict())
+
+    def _handle(self, data):
+        if not self.validate_digest(data, self.pprov):
+            logger.warning(f"Invalid digest received from Ogone for data {data}")
+            return HttpResponse("")
+
+        self.order.log_action(
+            "pretix_ogone.event",
+            data=data,
+        )
+        try:
+            self.process_result(data, self.payment, self.pprov)
+        except Quota.QuotaExceededException:
+            pass
+        except PaymentException as e:
+            if self.payment.state in (
+                OrderPayment.PAYMENT_STATE_PENDING,
+                OrderPayment.PAYMENT_STATE_CREATED,
+            ):
                 self.payment.fail(log_data={"exception": str(e)})
-        elif data["STATUS"] == "9":
-            self.payment.confirm()
-        else:
-            messages.error(
-                self.request,
-                _("The payment has failed. You can click below to try again."),
-            )
-            self.payment.fail(
-                info_data=dict(data.items()),
-                log_data={"result": self.kwargs.get("result"), **dict(data.items())},
-            )
+        return HttpResponse("")

@@ -10,12 +10,12 @@ from django.utils.functional import lazy
 from django.utils.translation import gettext_lazy as _
 from lxml import etree
 from pretix.base.forms import SecretKeySettingsField
-from pretix.base.models import Event, OrderPayment
+from pretix.base.models import Event, OrderPayment, OrderRefund
 from pretix.base.payment import BasePaymentProvider, PaymentException
 from pretix.base.settings import SettingsSandbox
 from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
 
-from pretix_ogone.constants import SHA_IN_PARAMETERS
+from pretix_ogone.constants import PENDING_STATES, SHA_IN_PARAMETERS
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,8 @@ class OgoneSettingsHolder(BasePaymentProvider):
     def test_mode_message(self):
         if "/test/" in self.settings.backend:
             return _(
-                "The Ogone plugin is operating in test mode. No money will actually be transferred."
+                "The Ogone plugin is operating in test mode. No money will actually be transferred. You can use credit "
+                "card 4111111111111111 for testing."
             )
         return None
 
@@ -83,13 +84,26 @@ class OgoneSettingsHolder(BasePaymentProvider):
                 ),
             ),
             (
+                "hash",
+                forms.ChoiceField(
+                    label=_("Hash algorithm"),
+                    choices=(
+                        ("sha1", "SHA-1"),
+                        ("sha256", "SHA-256"),
+                        ("sha512", "SHA-512"),
+                    ),
+                    help_text=_(
+                        'Check at "Configuration", "Technical information", "Global security parameters" that '
+                        "the Hash algorithm is set to the value configured here."
+                    ),
+                ),
+            ),
+            (
                 "sha_in_pass",
                 SecretKeySettingsField(
                     label=_("SHA-IN pass phrase"),
                     help_text=_(
-                        'Can be found at "Configuration", "Technical information", "Data and origin verification". Check'
-                        'at "Configuration", "Technical information", "Global security parameters" that the Hash '
-                        'algorithm is set to "SHA-512".'
+                        'Can be found at "Configuration", "Technical information", "Data and origin verification".'
                     ),
                 ),
             ),
@@ -109,7 +123,8 @@ class OgoneSettingsHolder(BasePaymentProvider):
                 forms.CharField(
                     label=_("API User ID"),
                     help_text=_(
-                        "<a href='https://support.legacy.worldline-solutions.com/en/integration-solutions/integrations/directlink#directlink_integration_guides_api_user'>Setup guide</a>"
+                        "<a href='https://support.legacy.worldline-solutions.com/en/integration-solutions/integrations/"
+                        "directlink#directlink_integration_guides_api_user'>Setup guide</a>"
                     ),
                 ),
             ),
@@ -197,7 +212,7 @@ class OgoneSettingsHolder(BasePaymentProvider):
 
 class OgoneMethod(BasePaymentProvider):
     method = ""
-    abort_pending_allowed = True
+    abort_pending_allowed = False
     pm_value = "UNSET"
 
     def __init__(self, event: Event):
@@ -219,10 +234,10 @@ class OgoneMethod(BasePaymentProvider):
         )
 
     def payment_refund_supported(self, payment: OrderPayment) -> bool:
-        return False
+        return True
 
     def payment_partial_refund_supported(self, payment: OrderPayment) -> bool:
-        return False
+        return True
 
     def payment_prepare(self, request, payment):
         return self.checkout_prepare(request, None)
@@ -310,8 +325,60 @@ class OgoneMethod(BasePaymentProvider):
             },
         )
 
+    def execute_refund(self, refund: OrderRefund):
+        payment = refund.payment
+        current_status = self._direct_api_call(
+            "querydirect.asp",
+            {
+                "PAYID": payment.info_data["PAYID"],
+                "PSPID": self.settings.pspid,
+                "PSWD": self.settings.api_user_password,
+                "USERID": self.settings.api_user_userid,
+            },
+        )
+        if current_status["STATUS"] not in ("9", "91", "8", "81"):
+            raise PaymentException(
+                _("Payment is not in correct status to be refunded.")
+            )
+
+        response = self._direct_api_call(
+            "maintenancedirect.asp",
+            {
+                "AMOUNT": str(int(refund.amount * 100)),
+                "OPERATION": (
+                    "RFS" if payment.refunded_amount >= payment.amount else "RFD"
+                ),
+                "PAYID": payment.info_data["PAYID"],
+                "PSPID": self.settings.pspid,
+                "PSWD": self.settings.api_user_password,
+                "USERID": self.settings.api_user_userid,
+            },
+        )
+        refund.info_data = response
+        refund.save()
+        if response["STATUS"] in ("8", "81"):
+            refund.done()
+        else:
+            raise PaymentException(
+                _("Refund was not sucessful (error message: {error})").format(
+                    error=response["STATUS"]
+                    + " / "
+                    + response.get("NCERROR")
+                    + " "
+                    + response.get("NCERRORPLUS", "")
+                )
+            )
+
+    @property
+    def hashalg(self):
+        if self.settings.get("hash") == "sha1":
+            return hashlib.sha1
+        elif self.settings.get("hash") == "sha256":
+            return hashlib.sha256
+        return hashlib.sha512
+
     def sign_parameters(self, params: OrderedDict) -> OrderedDict:
-        digest = hashlib.sha512()
+        digest = self.hashalg()
         for parname in SHA_IN_PARAMETERS:
             if parname in params and params[parname]:
                 digest.update(
@@ -353,23 +420,24 @@ class OgoneMethod(BasePaymentProvider):
             if locale_parts[0] + "_" + locale_parts[1].upper() in supported_languages:
                 locale = locale_parts[0] + "_" + locale_parts[1].upper()
             else:
-                for l in supported_languages:
-                    if l.startswith(locale_parts[0]):
-                        locale = l
+                for language in supported_languages:
+                    if language.startswith(locale_parts[0]):
+                        locale = language
 
         hash = hashlib.sha1(payment.order.secret.lower().encode()).hexdigest()
-        ident = self.identifier.split("_")[0]
         return {
             "PSPID": self.settings.get("pspid"),
             "ORDERID": payment.full_id,
+            "OPERATION": "SAL",
             "AMOUNT": str(int(payment.amount * 100)),
             "CURRENCY": self.event.currency,
             "LANGUAGE": locale,
             "EMAIL": payment.order.email,
             "PM": self.pm_value,
+            "PARAMVAR": f"{self.event.organizer.slug}-{self.event.slug}-{payment.order.code}-{payment.pk}",
             "ACCEPTURL": build_absolute_uri(
                 self.event,
-                "plugins:pretix_ogone:return".format(ident),
+                "plugins:pretix_ogone:return",
                 kwargs={
                     "order": payment.order.code,
                     "payment": payment.pk,
@@ -379,7 +447,7 @@ class OgoneMethod(BasePaymentProvider):
             ),
             "DECLINEURL": build_absolute_uri(
                 self.event,
-                "plugins:pretix_ogone:return".format(ident),
+                "plugins:pretix_ogone:return",
                 kwargs={
                     "order": payment.order.code,
                     "payment": payment.pk,
@@ -389,7 +457,7 @@ class OgoneMethod(BasePaymentProvider):
             ),
             "EXCEPTIONURL": build_absolute_uri(
                 self.event,
-                "plugins:pretix_ogone:return".format(ident),
+                "plugins:pretix_ogone:return",
                 kwargs={
                     "order": payment.order.code,
                     "payment": payment.pk,
@@ -399,7 +467,7 @@ class OgoneMethod(BasePaymentProvider):
             ),
             "CANCELURL": build_absolute_uri(
                 self.event,
-                "plugins:pretix_ogone:return".format(ident),
+                "plugins:pretix_ogone:return",
                 kwargs={
                     "order": payment.order.code,
                     "payment": payment.pk,
@@ -412,15 +480,15 @@ class OgoneMethod(BasePaymentProvider):
     def _direct_api_call(self, path, data):
         try:
             r = requests.post(
-                f"{self.settings.backend}maintenancedirect.asp",
+                f"{self.settings.backend}{path}",
                 data=self.sign_parameters(data),
             )
             r.raise_for_status()
-        except requests.RequestException as e:
+        except requests.RequestException:
             logger.exception("Could not reach ogone backend")
             raise PaymentException(_("Could not reach payment provider"))
 
-        return etree.fromstring(r.text).attrib
+        return dict(etree.fromstring(r.text).attrib)
 
     def capture_payment(self, payment):
         response = self._direct_api_call(
@@ -439,8 +507,11 @@ class OgoneMethod(BasePaymentProvider):
             **response,
         }
         payment.save(update_fields=["info"])
-        if response["STATUS"] in ("91", "9"):
+        if response["STATUS"] == "9":
             payment.confirm()
+        elif response["STATUS"] in PENDING_STATES:
+            payment.state = OrderPayment.PAYMENT_STATE_PENDING
+            payment.save()
 
 
 class OgoneCreditCard(OgoneMethod):
