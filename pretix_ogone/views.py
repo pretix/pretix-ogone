@@ -1,4 +1,3 @@
-import hashlib
 import logging
 from django.contrib import messages
 from django.db import transaction
@@ -37,21 +36,15 @@ class OgoneOrderView:
                     slug=kwargs.get("event"),
                     organizer__slug=kwargs.get("organizer"),
                 )
-            self.order = event.orders.get(code=kwargs["order"])
-            if "hash" in kwargs and (
-                hashlib.sha1(self.order.secret.lower().encode()).hexdigest()
-                != kwargs["hash"].lower()
-            ):
-                raise Http404("Unknown order")
-        except Order.DoesNotExist:
-            # Do a hash comparison as well to harden timing attacks
-            if (
-                "abcdefghijklmnopq".lower()
-                == hashlib.sha1("abcdefghijklmnopq".encode()).hexdigest()
-            ):
-                raise Http404("Unknown order")
+
+            if "hash" in kwargs:
+                self.order = event.orders.get_with_secret_check(
+                    code=kwargs["order"], received_secret=kwargs["hash"], tag='plugins:pretix_ogone'
+                )
             else:
-                raise Http404("Unknown order")
+                self.order = event.orders.get(code=kwargs["order"])
+        except Order.DoesNotExist:
+            raise Http404("Unknown order")
         return super().dispatch(request, *args, **kwargs)
 
     @cached_property
