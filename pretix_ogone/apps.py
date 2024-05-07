@@ -16,7 +16,9 @@ class PluginApp(PluginConfig):
     class PretixPluginMeta:
         name = gettext_lazy("Ogone")
         author = "pretix team"
-        description = gettext_lazy("Accept payments through the Ogone interface (legacy interface of Nexi Payengine / Wordline)")
+        description = gettext_lazy(
+            "Accept payments through the Ogone interface (legacy interface of Nexi Payengine / Wordline)"
+        )
         visible = True
         version = __version__
         category = "PAYMENT"

@@ -1,9 +1,46 @@
 Ogone
-==========================
+=====
 
 This is a plugin for `pretix`_. 
 
 Accept payments through the Ogone interface (legacy interface of Nexi Payengine / Wordline)
+
+Assumed Ogone settings
+----------------------
+
+- Configuration
+
+  - Technical Information
+
+    - Global transaction parameters
+
+      - Processing for individual transactions: Always online (immediate)
+
+    - Global security parameters
+
+      - Hash algorithm: SHA-512
+
+    - Data and origin verification
+
+      - No "URL of the merchant page" set
+
+      - No "IP address" set
+
+      - SHA-IN passphrase set
+
+    - Transaction feedback
+
+      - "I would like to receive transaction feedback parameters on the redirection URLs." **enabled**
+
+      - "I would like Worldline to display a short text to the customer on the secure …" **disabled**
+
+      - Direct HTTP server-to-server request
+
+        - Timing: Online but switch to a deferred request when the online requests fail.
+
+        - Both URL fields: ``https://pretix-domain/_ogone/hook/<PARAMVAR>/``
+
+        - Request method: POST
 
 Development setup
 -----------------
@@ -38,6 +75,12 @@ You can auto-fix some of these issues by running::
 
 To automatically check for these issues before you commit, you can run ``.install-hooks``.
 
+
+Upstream documentation
+----------------------
+
+- https://support-payengine.ecom-psp.com/de/integration-solutions/integrations/hosted-payment-page
+- https://support.legacy.worldline-solutions.com/en/
 
 License
 -------
