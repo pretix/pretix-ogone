@@ -37,15 +37,6 @@ class OgoneSettingsHolder(BasePaymentProvider):
         self.settings = SettingsSandbox("payment", "ogone", event)
 
     @property
-    def test_mode_message(self):
-        if "/test/" in self.settings.backend:
-            return _(
-                "The Ogone plugin is operating in test mode. No money will actually be transferred. You can use credit "
-                "card 4111111111111111 for testing."
-            )
-        return None
-
-    @property
     def settings_form_fields(self):
         fields = [
             (
@@ -224,6 +215,15 @@ class OgoneMethod(BasePaymentProvider):
     def __init__(self, event: Event):
         super().__init__(event)
         self.settings = SettingsSandbox("payment", "ogone", event)
+
+    @property
+    def test_mode_message(self):
+        if "/test/" in self.settings.backend:
+            return _(
+                "The Ogone plugin is operating in test mode. No money will actually be transferred. You can use credit "
+                "card 4111111111111111 for testing."
+            )
+        return None
 
     @property
     def settings_form_fields(self):
