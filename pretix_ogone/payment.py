@@ -327,7 +327,7 @@ class OgoneMethod(BasePaymentProvider):
             kwargs={
                 "order": payment.order.code,
                 "payment": payment.pk,
-                "hash": hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
+                "hash": payment.order.tagged_secret("plugins:pretix_ogone"),
             },
         )
 
@@ -430,7 +430,7 @@ class OgoneMethod(BasePaymentProvider):
                     if language.startswith(locale_parts[0]):
                         locale = language
 
-        hash = hashlib.sha1(payment.order.secret.lower().encode()).hexdigest()
+        hash = payment.order.tagged_secret("plugins:pretix_ogone")
         return {
             "PSPID": self.settings.get("pspid"),
             "ORDERID": payment.full_id,
