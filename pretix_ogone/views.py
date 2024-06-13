@@ -39,7 +39,9 @@ class OgoneOrderView:
 
             if "hash" in kwargs:
                 self.order = event.orders.get_with_secret_check(
-                    code=kwargs["order"], received_secret=kwargs["hash"], tag='plugins:pretix_ogone'
+                    code=kwargs["order"],
+                    received_secret=kwargs["hash"],
+                    tag="plugins:pretix_ogone",
                 )
             else:
                 self.order = event.orders.get(code=kwargs["order"])
