@@ -25,6 +25,12 @@ event_patterns = [
 
 urlpatterns = [
     path(
+        "_ogone/hook/<str:organizer>_<str:event>_<str:order>_<str:payment>/",
+        HookView.as_view(),
+        name="webhook",
+    ),
+    path(
+        # legacy payments
         "_ogone/hook/<str:organizer>-<str:event>-<str:order>-<str:payment>/",
         HookView.as_view(),
         name="webhook",

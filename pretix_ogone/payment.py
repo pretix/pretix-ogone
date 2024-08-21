@@ -440,7 +440,7 @@ class OgoneMethod(BasePaymentProvider):
             "LANGUAGE": locale,
             "EMAIL": payment.order.email,
             "PM": self.pm_value,
-            "PARAMVAR": f"{self.event.organizer.slug}-{self.event.slug}-{payment.order.code}-{payment.pk}",
+            "PARAMVAR": f"{self.event.organizer.slug}_{self.event.slug}_{payment.order.code}_{payment.pk}",
             "ACCEPTURL": build_absolute_uri(
                 self.event,
                 "plugins:pretix_ogone:return",
