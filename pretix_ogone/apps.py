@@ -20,6 +20,7 @@ class PluginApp(PluginConfig):
             "Accept payments through the Ogone interface (legacy interface of Nexi Payengine / Wordline)"
         )
         visible = True
+        restricted = True
         version = __version__
         category = "PAYMENT"
         compatibility = "pretix>=2024.4.0"
